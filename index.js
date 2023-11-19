@@ -25,12 +25,13 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const userCollection = client.db("bistroDb").collection("users");
     const menuCollection = client.db("bistroDb").collection("menu");
     const reviewCollection = client.db("bistroDb").collection("reviews");
     const cartCollection = client.db("bistroDb").collection("carts");
+    const paymentCollection = client.db("bistroDb").collection("payments");
 
     // jwt related api
     app.post("/jwt", (req, res) => {
@@ -40,6 +41,8 @@ async function run() {
       });
       res.send({ token });
     });
+
+    /***************************************************************************/
 
     // middleware verify
     const verifyToken = (req, res, next) => {
@@ -56,6 +59,8 @@ async function run() {
       });
     };
 
+    /***************************************************************************/
+
     // verify admin api
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email;
@@ -67,6 +72,8 @@ async function run() {
       }
       next();
     };
+
+    /***************************************************************************/
 
     // user collection
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
@@ -125,6 +132,8 @@ async function run() {
       res.send(result);
     });
 
+    /***************************************************************************/
+
     // cart collection
     app.get("/carts", async (req, res) => {
       const email = req.query.email;
@@ -146,30 +155,14 @@ async function run() {
       res.send(result);
     });
 
-    // payment intent
-    app.post("/create-payment-intent", async (req, res) => {
-      const { price } = req.body;
-      const amount = parseInt(price * 100);
-
-      console.log(amount, "amount inside the payment intent");
-
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: amount,
-        currency: "usd",
-        payment_method_types: ["card"],
-      });
-      res.send({
-        clientSecret: paymentIntent.client_secret,
-      });
-    });
-
     app.delete("/carts/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
-      console.log("delete querry ", query);
       const result = await cartCollection.deleteOne(query);
       res.send(result);
     });
+
+    /***************************************************************************/
 
     // menu related api
 
@@ -181,9 +174,7 @@ async function run() {
     app.get("/menu/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: id };
-      console.log("menu query", query);
       const result = await menuCollection.findOne(query);
-      console.log(result);
       res.send(result);
     });
 
@@ -207,7 +198,7 @@ async function run() {
         },
       };
       const result = await menuCollection.updateOne(filter, updatedDoc);
-      console.log(result);
+
       res.send(result);
     });
 
@@ -218,13 +209,58 @@ async function run() {
       res.send(result);
     });
 
+    /***************************************************************************/
+
+    // payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      const query = { email: req.params.email };
+      if (req.params.email !== req.decoded.email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+
+      // carefully delete each from the cart
+      console.log("payment info ", payment);
+      const query = {
+        _id: {
+          $in: payment.cartIds.map((id) => new ObjectId(id)),
+        },
+      };
+      const deleteResult = await cartCollection.deleteMany(query);
+      res.send({ paymentResult, deleteResult });
+    });
+
+    /***************************************************************************/
+    // review collection
+
     app.get("/reviews", async (req, res) => {
       const result = await reviewCollection.find().toArray();
       res.send(result);
     });
 
+    /***************************************************************************/
+
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
